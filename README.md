@@ -50,7 +50,7 @@ ok = iommap:close(H).
 | `advise(Handle, Offset, Len, Hint)` | madvise hints |
 | `position(Handle)` | Get file size |
 
-See [doc/features.md](doc/features.md) for full documentation.
+See [guides/features.md](guides/features.md) for full documentation.
 
 ## Building
 

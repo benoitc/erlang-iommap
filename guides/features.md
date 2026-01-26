@@ -1,4 +1,4 @@
-# iommap - Erlang Memory-Mapped File I/O
+# Features & API Reference
 
 ## Features
 
@@ -52,13 +52,22 @@ Provide hints to the kernel about access patterns:
 
 Opens a file for memory-mapped access.
 
+**Arguments:**
+- `Path` - File path (string or binary)
+- `Mode` - Access mode: `read`, `write`, or `read_write`
+- `Options` - List of options (see Mapping Options above)
+
+**Returns:**
+- `{ok, Handle}` on success
+- `{error, Reason}` on failure
+
 ### close/1
 
 ```erlang
 ok = iommap:close(Handle).
 ```
 
-Closes the mapping and file descriptor. The handle becomes invalid.
+Closes the mapping and file descriptor. The handle becomes invalid after this call.
 
 ### pread/3
 
@@ -68,6 +77,16 @@ Closes the mapping and file descriptor. The handle becomes invalid.
 
 Reads `Length` bytes starting at `Offset`. Returns a copy of the data.
 
+**Arguments:**
+- `Handle` - Memory map handle
+- `Offset` - Byte offset to start reading
+- `Length` - Number of bytes to read
+
+**Returns:**
+- `{ok, Binary}` containing the requested data
+- `{error, out_of_bounds}` if range exceeds file size
+- `{error, sigbus}` if memory access fault occurred
+
 ### pwrite/3
 
 ```erlang
@@ -76,6 +95,16 @@ ok = iommap:pwrite(Handle, Offset, Data).
 
 Writes `Data` (binary or iolist) at `Offset`.
 
+**Arguments:**
+- `Handle` - Memory map handle
+- `Offset` - Byte offset to start writing
+- `Data` - Binary or iolist to write
+
+**Returns:**
+- `ok` on success
+- `{error, out_of_bounds}` if range exceeds file size
+- `{error, sigbus}` if memory access fault occurred
+
 ### sync/1, sync/2
 
 ```erlang
@@ -83,7 +112,11 @@ ok = iommap:sync(Handle).
 ok = iommap:sync(Handle, Mode).
 ```
 
-Flushes changes to disk. Mode can be `sync` (blocking) or `async`.
+Flushes changes to disk.
+
+**Arguments:**
+- `Handle` - Memory map handle
+- `Mode` - `sync` (blocking, default) or `async` (non-blocking)
 
 ### truncate/2
 
@@ -91,7 +124,11 @@ Flushes changes to disk. Mode can be `sync` (blocking) or `async`.
 ok = iommap:truncate(Handle, NewSize).
 ```
 
-Resizes the file and remaps the memory region.
+Resizes the file and remaps the memory region. Existing data beyond `NewSize` is lost.
+
+**Arguments:**
+- `Handle` - Memory map handle
+- `NewSize` - New file size in bytes
 
 ### advise/4
 
@@ -99,7 +136,13 @@ Resizes the file and remaps the memory region.
 ok = iommap:advise(Handle, Offset, Length, Hint).
 ```
 
-Provides access pattern hints to the kernel.
+Provides access pattern hints to the kernel for optimization.
+
+**Arguments:**
+- `Handle` - Memory map handle
+- `Offset` - Start of region
+- `Length` - Length of region (0 for entire file)
+- `Hint` - `normal`, `random`, `sequential`, `willneed`, or `dontneed`
 
 ### position/1
 
@@ -119,13 +162,16 @@ The NIF uses pthread read-write locks to ensure thread safety:
 ## Error Handling
 
 Errors are returned as `{error, Reason}` tuples:
-- `badarg` - Invalid arguments
-- `enomem` - Out of memory
-- `enoent` - File not found
-- `eacces` - Permission denied
-- `closed` - Handle already closed
-- `out_of_bounds` - Offset/length exceeds file size
-- `sigbus` - Memory access fault (file truncated externally)
+
+| Reason | Description |
+|--------|-------------|
+| `badarg` | Invalid arguments |
+| `enomem` | Out of memory |
+| `enoent` | File not found |
+| `eacces` | Permission denied |
+| `closed` | Handle already closed |
+| `out_of_bounds` | Offset/length exceeds file size |
+| `sigbus` | Memory access fault (file truncated externally) |
 
 ## SIGBUS Protection
 

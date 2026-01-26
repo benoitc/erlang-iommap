@@ -1,16 +1,65 @@
+%%% @author Benoit Chesneau <bchesneau@gmail.com>
+%%% @copyright 2026 Benoit Chesneau
 %%% @doc Memory-mapped file I/O for Erlang.
 %%%
 %%% This module provides cross-platform memory-mapped file access
-%%% compatible with Linux, macOS, and BSD systems.
+%%% compatible with Linux, macOS, FreeBSD, and OpenBSD.
 %%%
-%%% == Example ==
+%%% Memory-mapped files allow applications to access file data as if it
+%%% were in memory, enabling efficient random access patterns and shared
+%%% memory between processes.
+%%%
+%%% == Quick Start ==
+%%%
 %%% ```
+%%% %% Create and write to a memory-mapped file
 %%% {ok, H} = iommap:open("/tmp/test.dat", read_write, [create, {size, 4096}]),
 %%% ok = iommap:pwrite(H, 0, <<"Hello, iommap!">>),
 %%% {ok, <<"Hello, iommap!">>} = iommap:pread(H, 0, 14),
 %%% ok = iommap:sync(H),
 %%% ok = iommap:close(H).
 %%% '''
+%%%
+%%% == Access Modes ==
+%%%
+%%% <ul>
+%%%   <li>`read' - Read-only access to the file</li>
+%%%   <li>`write' - Write-only access to the file</li>
+%%%   <li>`read_write' - Full read and write access (default)</li>
+%%% </ul>
+%%%
+%%% == Mapping Options ==
+%%%
+%%% <ul>
+%%%   <li>`shared' - Changes are visible to other processes (default)</li>
+%%%   <li>`private' - Copy-on-write; changes are private</li>
+%%%   <li>`lock' - Lock pages in memory (mlock)</li>
+%%%   <li>`populate' - Prefault pages on mapping (Linux only)</li>
+%%%   <li>`nocache' - Disable page caching (macOS only)</li>
+%%%   <li>`create' - Create file if it doesn't exist</li>
+%%%   <li>`truncate' - Truncate existing file</li>
+%%%   <li>`{size, N}' - Initial size for new files</li>
+%%% </ul>
+%%%
+%%% == Thread Safety ==
+%%%
+%%% All operations are thread-safe. The NIF uses pthread read-write locks
+%%% to allow multiple concurrent reads while writes are exclusive.
+%%%
+%%% == Error Handling ==
+%%%
+%%% Operations return `{error, Reason}' on failure. Common reasons:
+%%% <ul>
+%%%   <li>`badarg' - Invalid arguments</li>
+%%%   <li>`enomem' - Out of memory</li>
+%%%   <li>`enoent' - File not found</li>
+%%%   <li>`eacces' - Permission denied</li>
+%%%   <li>`closed' - Handle already closed</li>
+%%%   <li>`out_of_bounds' - Offset/length exceeds file size</li>
+%%%   <li>`sigbus' - Memory access fault (file truncated externally)</li>
+%%% </ul>
+%%%
+%%% @end
 -module(iommap).
 
 -export([open/2, open/3, close/1]).

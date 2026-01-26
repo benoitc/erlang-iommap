@@ -4,8 +4,12 @@ ebin/
 priv/
 *.beam
 *.o
+*.d
 *.so
 *.dylib
+
+# Generated docs
+doc/
 
 # Rebar3
 .rebar3/
