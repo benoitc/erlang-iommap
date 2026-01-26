@@ -1,0 +1,28 @@
+# Dockerfile for testing iommap NIF on Debian Linux
+FROM erlang:26
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    make \
+    gcc \
+    g++ \
+    libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install rebar3
+RUN wget https://github.com/erlang/rebar3/releases/download/3.24.0/rebar3 -O /usr/local/bin/rebar3 && \
+    chmod +x /usr/local/bin/rebar3
+
+WORKDIR /app
+
+# Copy source files
+COPY rebar.config rebar.lock* ./
+COPY src/ src/
+COPY c_src/ c_src/
+COPY test/ test/
+
+# Build and test
+RUN rebar3 compile
+
+CMD ["rebar3", "eunit"]

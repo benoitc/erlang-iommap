@@ -1,0 +1,21 @@
+# Docker Compose for local multi-platform testing
+version: '3.8'
+
+services:
+  # Test on Linux (Alpine)
+  test-linux-alpine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: rebar3 eunit
+    volumes:
+      - ./test-results:/app/_build/test/logs
+
+  # Test on Linux (Debian)
+  test-linux-debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian
+    command: rebar3 eunit
+    volumes:
+      - ./test-results:/app/_build/test/logs

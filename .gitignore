@@ -1,0 +1,31 @@
+# Build artifacts
+_build/
+ebin/
+priv/
+*.beam
+*.o
+*.so
+*.dylib
+
+# Rebar3
+.rebar3/
+rebar.lock
+
+# Test results
+test-results/
+.eunit/
+logs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+test-results/

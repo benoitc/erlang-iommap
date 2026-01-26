@@ -1,0 +1,116 @@
+---
+name: build
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  # Linux x86_64 - main CI
+  linux:
+    name: Linux x86_64 OTP-${{matrix.otp}}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        otp: ["26", "27", "28"]
+        rebar3: ['3.24.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.otp}}
+          rebar3-version: ${{matrix.rebar3}}
+      - run: rebar3 xref
+      - run: rebar3 eunit
+      - run: rebar3 dialyzer
+
+  # Linux ARM64
+  linux-arm64:
+    name: Linux ARM64 OTP-${{matrix.otp}}
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        otp: ["27"]
+        rebar3: ['3.24.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.otp}}
+          rebar3-version: ${{matrix.rebar3}}
+      - run: rebar3 xref
+      - run: rebar3 eunit
+
+  # macOS ARM64 (Apple Silicon)
+  macos:
+    name: macOS ARM64 OTP-${{matrix.otp}}
+    runs-on: macos-15
+    strategy:
+      matrix:
+        otp: ["27"]
+        rebar3: ['3.24.0']
+    steps:
+      - name: Install Erlang
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1"
+        run: |
+          brew update
+          brew install erlang@${{ matrix.otp }}
+          echo "$(brew --prefix erlang@${{ matrix.otp }})/bin" >> $GITHUB_PATH
+      - name: Install rebar3
+        run: |
+          wget https://github.com/erlang/rebar3/releases/download/${{ matrix.rebar3 }}/rebar3 && chmod +x rebar3
+          sudo mv rebar3 /usr/local/bin/ && sudo chmod +x /usr/local/bin/rebar3
+      - uses: actions/checkout@v4
+      - run: rebar3 xref
+      - run: rebar3 eunit
+
+  # FreeBSD
+  freebsd:
+    name: FreeBSD 14.2 OTP-28
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: |
+            pkg install -y erlang-runtime28 rebar3 git
+          run: |
+            export PATH="/usr/local/lib/erlang28/bin:$PATH"
+            echo "Erlang version:"
+            erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
+            echo "Architecture:"
+            uname -m
+            git config --global --add safe.directory $GITHUB_WORKSPACE
+            rebar3 eunit
+
+  # OpenBSD
+  openbsd:
+    name: OpenBSD 7.6 OTP-27
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on OpenBSD
+        uses: vmactions/openbsd-vm@v1
+        with:
+          release: "7.6"
+          usesh: true
+          prepare: |
+            pkg_add erlang-27 rebar3 git
+          run: |
+            echo "Erlang version:"
+            erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
+            echo "Architecture:"
+            uname -m
+            git config --global --add safe.directory $GITHUB_WORKSPACE
+            rebar3 eunit

@@ -1,0 +1,12 @@
+_build/
+.rebar3/
+*.beam
+*.o
+*.d
+*.so
+priv/
+erl_crash.dump
+.eunit/
+.idea/
+*.swp
+*~
