@@ -96,21 +96,25 @@ jobs:
 
   # OpenBSD
   openbsd:
-    name: OpenBSD 7.6 OTP-27
+    name: OpenBSD 7.8
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Test on OpenBSD
         uses: vmactions/openbsd-vm@v1
         with:
-          release: "7.6"
+          release: "7.8"
           usesh: true
           prepare: |
-            pkg_add erlang-27 rebar3 git
+            set -eux
+            pkg_add git gmake erlang-27.3.4.3v0
+            # rebar3 not in OpenBSD packages - download directly
+            ftp -o /usr/local/bin/rebar3 https://s3.amazonaws.com/rebar3/rebar3
+            chmod +x /usr/local/bin/rebar3
           run: |
-            echo "Erlang version:"
-            erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
-            echo "Architecture:"
-            uname -m
-            git config --global --add safe.directory $GITHUB_WORKSPACE
+            set -eux
+            export PATH="/usr/local/lib/erlang27/bin:/usr/local/bin:$PATH"
+            erl -version
+            rebar3 --version
             rebar3 eunit
