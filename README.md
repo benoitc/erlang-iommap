@@ -161,6 +161,12 @@ rebar3 ex_doc
 | FreeBSD | CI tested | posix_fallocate supported |
 | OpenBSD | CI tested | |
 
+## Support
+
+Support, design and discussions are done via the [GitHub Tracker](https://github.com/benoitc/erlang-iommap/issues).
+
+Professional support is available via [Enki Multimedia](https://enki-multimedia.eu). Contact sales@enki-multimedia.eu.
+
 ## License
 
 MIT - See [LICENSE](LICENSE) for details.

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release of iommap
+- Dirty NIF I/O schedulers for all I/O operations
 - Cross-platform memory-mapped file I/O for Erlang/OTP
 - Support for Linux, macOS, FreeBSD, and OpenBSD
 - Core operations: `open/2,3`, `close/1`, `pread/3`, `pwrite/3`
