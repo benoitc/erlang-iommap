@@ -89,4 +89,4 @@ make docker-test
 
 ## License
 
-Apache-2.0
+MIT - See [LICENSE](LICENSE) for details.
