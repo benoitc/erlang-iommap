@@ -1,14 +1,37 @@
 # iommap
 
+[![Hex.pm](https://img.shields.io/hexpm/v/iommap.svg)](https://hex.pm/packages/iommap)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/iommap)
+[![CI](https://github.com/benoitc/erlang-iommap/actions/workflows/ci.yml/badge.svg)](https://github.com/benoitc/erlang-iommap/actions/workflows/ci.yml)
+
 Memory-mapped file I/O NIF for Erlang.
 
 ## Overview
 
-`iommap` provides cross-platform memory-mapped file access for Erlang/OTP, compatible with Linux, macOS, and BSD systems.
+`iommap` provides cross-platform memory-mapped file access for Erlang/OTP. Memory-mapped files allow applications to access file data as if it were in memory, enabling efficient random access patterns and shared memory between processes.
+
+**Features:**
+
+- Cross-platform: Linux, macOS, FreeBSD, OpenBSD
+- Thread-safe with pthread read-write locks
+- SIGBUS protection for safe memory access
+- Positional read/write operations
+- Memory advice (madvise) hints
+- File resize with automatic remapping
 
 ## Installation
 
+### Using Hex
+
 Add to your `rebar.config`:
+
+```erlang
+{deps, [
+    {iommap, "1.0.0"}
+]}.
+```
+
+### From GitHub
 
 ```erlang
 {deps, [
@@ -19,38 +42,98 @@ Add to your `rebar.config`:
 ## Quick Start
 
 ```erlang
-%% Create a new file with memory mapping
+%% Create a new memory-mapped file
 {ok, H} = iommap:open("/tmp/test.dat", read_write, [create, {size, 4096}]).
 
-%% Write data
+%% Write data at offset 0
 ok = iommap:pwrite(H, 0, <<"Hello, iommap!">>).
 
 %% Read data back
 {ok, <<"Hello, iommap!">>} = iommap:pread(H, 0, 14).
 
-%% Sync to disk
+%% Sync changes to disk
 ok = iommap:sync(H).
 
-%% Close
+%% Close the mapping
 ok = iommap:close(H).
 ```
 
-## API
+## API Reference
 
-| Function | Description |
-|----------|-------------|
-| `open(Path, Options)` | Open with read_write mode |
-| `open(Path, Mode, Options)` | Open file and create mmap |
-| `close(Handle)` | Unmap and cleanup |
-| `pread(Handle, Offset, Length)` | Read bytes at offset |
-| `pwrite(Handle, Offset, Data)` | Write bytes at offset |
-| `sync(Handle)` | Flush to disk (sync) |
-| `sync(Handle, Mode)` | Flush with sync/async mode |
-| `truncate(Handle, NewSize)` | Resize file and remap |
-| `advise(Handle, Offset, Len, Hint)` | madvise hints |
-| `position(Handle)` | Get file size |
+### Opening and Closing
 
-See [guides/features.md](guides/features.md) for full documentation.
+```erlang
+%% Open with default read_write mode
+{ok, Handle} = iommap:open(Path, Options).
+
+%% Open with explicit mode
+{ok, Handle} = iommap:open(Path, Mode, Options).
+
+%% Close handle
+ok = iommap:close(Handle).
+```
+
+**Modes:** `read`, `write`, `read_write`
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `{size, N}` | Initial size for new files (required with `create`) |
+| `shared` | Changes visible to other processes (default) |
+| `private` | Copy-on-write, changes are private |
+| `lock` | Lock pages in memory (mlock) |
+| `populate` | Prefault pages (Linux only) |
+| `nocache` | Disable page caching (macOS only) |
+| `create` | Create file if it doesn't exist |
+| `truncate` | Truncate existing file |
+
+### Reading and Writing
+
+```erlang
+%% Read Length bytes at Offset
+{ok, Binary} = iommap:pread(Handle, Offset, Length).
+
+%% Write Data at Offset
+ok = iommap:pwrite(Handle, Offset, Data).
+```
+
+### Synchronization
+
+```erlang
+%% Sync to disk (blocking)
+ok = iommap:sync(Handle).
+
+%% Sync with mode: sync (blocking) or async (non-blocking)
+ok = iommap:sync(Handle, async).
+```
+
+### File Operations
+
+```erlang
+%% Resize file and remap
+ok = iommap:truncate(Handle, NewSize).
+
+%% Get current mapped size
+{ok, Size} = iommap:position(Handle).
+
+%% Provide access pattern hints
+ok = iommap:advise(Handle, Offset, Length, Hint).
+```
+
+**Hints:** `normal`, `random`, `sequential`, `willneed`, `dontneed`
+
+## Documentation
+
+- [Features & API Reference](guides/features.md)
+- [Changelog](CHANGELOG.md)
+- [HexDocs](https://hexdocs.pm/iommap)
+
+Generate docs locally:
+
+```bash
+rebar3 ex_doc
+```
 
 ## Building
 
@@ -61,32 +144,25 @@ rebar3 compile
 # Run tests
 rebar3 eunit
 
-# Dialyzer
+# Type checking
 rebar3 dialyzer
-```
 
-## Docker Testing
-
-Test on multiple Linux distributions:
-
-```bash
-# Test on Alpine Linux
-make docker-test-alpine
-
-# Test on Debian Linux
-make docker-test-debian
-
-# Test on all platforms
-make docker-test
+# Generate documentation
+rebar3 ex_doc
 ```
 
 ## Platform Support
 
-- Linux (tested on Alpine, Debian, Ubuntu)
-- macOS (tested on latest)
-- FreeBSD (CI tested)
-- OpenBSD (CI tested)
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Linux x86_64 | Tested | MAP_POPULATE supported |
+| Linux ARM64 | Tested | MAP_POPULATE supported |
+| macOS ARM64 | Tested | MAP_NOCACHE supported |
+| FreeBSD | CI tested | posix_fallocate supported |
+| OpenBSD | CI tested | |
 
 ## License
 
 MIT - See [LICENSE](LICENSE) for details.
+
+Copyright (c) 2026 Benoit Chesneau
