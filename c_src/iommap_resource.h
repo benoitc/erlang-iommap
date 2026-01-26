@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Benoit Chesneau
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * @file iommap_resource.h
  * @brief Resource type and lifecycle management for iommap NIF

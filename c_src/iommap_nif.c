@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Benoit Chesneau
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * @file iommap_nif.c
  * @brief NIF entry point for iommap module

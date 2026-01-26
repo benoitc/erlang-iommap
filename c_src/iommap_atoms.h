@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Benoit Chesneau
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * @file iommap_atoms.h
  * @brief Atom declarations for iommap NIF
