@@ -91,12 +91,40 @@ ok = iommap:close(Handle).
 ### Reading and Writing
 
 ```erlang
-%% Read Length bytes at Offset
+%% Read Length bytes at Offset (copies)
 {ok, Binary} = iommap:pread(Handle, Offset, Length).
 
 %% Write Data at Offset
 ok = iommap:pwrite(Handle, Offset, Data).
 ```
+
+### Zero-Copy Region Binaries
+
+```erlang
+%% Refcounted view into the mapped region (no copy)
+{ok, View} = iommap:region_binary(Handle, Offset, Length).
+```
+
+`region_binary/3` returns a binary whose underlying memory is the
+page cache backing the mapping. No bytes are copied. The mapping is
+kept alive for as long as the returned binary, or any sub-binary
+derived from it, remains reachable.
+
+The NIF uses two internal resources to support this lifetime: a
+`mapping` resource owns the mmap region and file descriptor, and a
+`handle` resource owns the BEAM-facing handle and holds one
+reference to the mapping. `close/1` releases the handle's reference
+to the mapping but does not call `munmap` if region binaries are
+still outstanding. The `munmap` (and `close(fd)`) only run when the
+last reference is dropped.
+
+> Truncation hazard: `region_binary/3` is unsafe to use against
+> files that may be truncated by external processes (or by
+> `iommap:truncate/2` shrinking past the binary's range) while a
+> returned binary is reachable. Reads of unmapped pages happen
+> outside any NIF call and can crash the BEAM with SIGBUS. Callers
+> needing safety against external mutation must use `pread/3` (which
+> copies and is unaffected).
 
 ### Synchronization
 

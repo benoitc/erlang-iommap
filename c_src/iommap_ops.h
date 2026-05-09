@@ -79,4 +79,18 @@ ERL_NIF_TERM iommap_nif_advise(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
  */
 ERL_NIF_TERM iommap_nif_position(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 
+/**
+ * NIF: Build a refcounted resource binary that points directly into
+ * the mapped region (no data copy).
+ *
+ * nif_region_binary(Handle :: reference(), Offset :: non_neg_integer(),
+ *                   Length :: non_neg_integer()) ->
+ *     {ok, Data :: binary()} | {error, Reason :: atom()}
+ *
+ * The returned binary keeps the underlying mapping alive until the
+ * binary (and any sub-binaries derived from it) is garbage collected.
+ */
+ERL_NIF_TERM iommap_nif_region_binary(ErlNifEnv *env, int argc,
+                                       const ERL_NIF_TERM argv[]);
+
 #endif /* IOMMAP_OPS_H */
