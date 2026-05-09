@@ -5,7 +5,22 @@
 
 /**
  * @file iommap_resource.h
- * @brief Resource type and lifecycle management for iommap NIF
+ * @brief Resource types and lifecycle management for iommap NIF
+ *
+ * Two NIF resources are exposed:
+ *
+ *   - iommap_mapping_t owns the mmap region, the file descriptor and
+ *     the page-locked state. Its destructor performs munmap and
+ *     close(fd). Refcount is incremented for every outstanding
+ *     region_binary derived from it (via enif_make_resource_binary)
+ *     and once for the owning handle.
+ *
+ *   - iommap_handle_t owns the BEAM-facing handle term. It holds one
+ *     reference to a mapping. close/1 releases that reference but
+ *     leaves the handle term valid (subsequent operations return
+ *     {error, closed}). The mapping is unmapped only when its
+ *     refcount reaches zero, i.e. after close (or handle GC) AND all
+ *     outstanding region_binaries are GC'd.
  */
 
 #ifndef IOMMAP_RESOURCE_H
@@ -39,27 +54,44 @@ typedef struct {
 } iommap_options_t;
 
 /**
- * Memory-mapped file resource
+ * Mapped region resource. Immutable after construction.
+ *
+ * The destructor munmaps the region and closes the fd. The refcount
+ * is incremented for each outstanding region_binary so the region
+ * stays alive as long as any binary view references it.
  */
 typedef struct {
-    pthread_rwlock_t rwlock;    /* Read-write lock for thread safety */
-    int fd;                     /* File descriptor */
-    void *data;                 /* Mapped memory region */
-    size_t size;                /* Size of mapping */
-    iommap_mode_t mode;         /* Access mode */
-    int map_flags;              /* mmap flags used */
-    int prot;                   /* Protection flags */
-    bool closed;                /* True if handle has been closed */
-    bool locked;                /* True if mlock was called */
+    int fd;             /* File descriptor (owned) */
+    void *data;         /* Mapped base address */
+    size_t size;        /* Mapping size in bytes */
+    int map_flags;      /* mmap flags used */
+    int prot;           /* mmap protection */
+    bool locked;        /* True if mlock applied */
+} iommap_mapping_t;
+
+/**
+ * Handle resource. Owns one reference to a mapping.
+ *
+ * The rwlock serialises swaps of the mapping pointer (truncate),
+ * close, and concurrent reads vs writes to the mapped bytes. pwrite
+ * and truncate take the wrlock; pread, sync, advise, position and
+ * region_binary take the rdlock.
+ */
+typedef struct {
+    pthread_rwlock_t rwlock;
+    iommap_mapping_t *mapping;  /* NULL after close */
+    iommap_mode_t mode;
+    bool closed;
 } iommap_handle_t;
 
 /**
- * Global resource type for iommap handles
+ * Global resource types
  */
-extern ErlNifResourceType *IOMMAP_RESOURCE_TYPE;
+extern ErlNifResourceType *IOMMAP_HANDLE_RESOURCE_TYPE;
+extern ErlNifResourceType *IOMMAP_MAPPING_RESOURCE_TYPE;
 
 /**
- * Initialize the resource type. Must be called in NIF load.
+ * Initialize the resource types. Must be called in NIF load.
  *
  * @param env NIF environment
  * @return 0 on success
@@ -67,59 +99,54 @@ extern ErlNifResourceType *IOMMAP_RESOURCE_TYPE;
 int iommap_resource_init(ErlNifEnv *env);
 
 /**
- * Allocate a new iommap handle resource.
+ * Allocate a new mapping resource. Caller fills in the fields.
+ * Returned with refcount = 1 (caller-owned).
  *
  * @param env NIF environment
+ * @return New mapping or NULL on failure
+ */
+iommap_mapping_t *iommap_mapping_alloc(ErlNifEnv *env);
+
+/**
+ * Allocate a new handle resource. Takes a reference on `mapping`.
+ * Returned with refcount = 1 (caller-owned).
+ *
+ * @param env NIF environment
+ * @param mapping Mapping the handle should reference (kept)
+ * @param mode Access mode
  * @return New handle or NULL on failure
  */
-iommap_handle_t *iommap_resource_alloc(ErlNifEnv *env);
+iommap_handle_t *iommap_handle_alloc(ErlNifEnv *env,
+                                     iommap_mapping_t *mapping,
+                                     iommap_mode_t mode);
 
 /**
- * Create an Erlang term from a handle.
- *
- * @param env NIF environment
- * @param handle The handle to wrap
- * @return Erlang reference term
+ * Build an Erlang term from a handle and release the caller's
+ * reference (the BEAM term now owns it).
  */
-ERL_NIF_TERM iommap_resource_make_term(ErlNifEnv *env, iommap_handle_t *handle);
+ERL_NIF_TERM iommap_handle_make_term(ErlNifEnv *env, iommap_handle_t *handle);
 
 /**
- * Get handle from Erlang term.
+ * Get the handle behind an Erlang term.
  *
- * @param env NIF environment
- * @param term The term to unwrap
- * @param handle Output parameter for handle pointer
- * @return true if successful, false if term is not a valid handle
+ * @return true if the term is a valid handle resource
  */
-bool iommap_resource_get(ErlNifEnv *env, ERL_NIF_TERM term, iommap_handle_t **handle);
+bool iommap_handle_get(ErlNifEnv *env, ERL_NIF_TERM term,
+                       iommap_handle_t **handle);
 
 /**
  * Acquire read lock on handle.
- *
- * @param handle The handle to lock
  */
 void iommap_handle_rdlock(iommap_handle_t *handle);
 
 /**
  * Acquire write lock on handle.
- *
- * @param handle The handle to lock
  */
 void iommap_handle_wrlock(iommap_handle_t *handle);
 
 /**
  * Release lock on handle.
- *
- * @param handle The handle to unlock
  */
 void iommap_handle_unlock(iommap_handle_t *handle);
-
-/**
- * Check if handle is still valid (not closed).
- *
- * @param handle The handle to check
- * @return true if valid
- */
-bool iommap_handle_is_valid(iommap_handle_t *handle);
 
 #endif /* IOMMAP_RESOURCE_H */

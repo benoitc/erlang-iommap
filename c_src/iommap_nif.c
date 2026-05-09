@@ -52,14 +52,15 @@ static int on_upgrade(ErlNifEnv *env, void **priv_data, void **old_priv_data,
  * NIF function table
  */
 static ErlNifFunc nif_funcs[] = {
-    {"nif_open",     3, iommap_nif_open,     ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_close",    1, iommap_nif_close,    ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_pread",    3, iommap_nif_pread,    ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_pwrite",   3, iommap_nif_pwrite,   ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_sync",     2, iommap_nif_sync,     ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_truncate", 2, iommap_nif_truncate, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_advise",   4, iommap_nif_advise,   ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_position", 1, iommap_nif_position, 0}
+    {"nif_open",          3, iommap_nif_open,          ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_close",         1, iommap_nif_close,         ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_pread",         3, iommap_nif_pread,         ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_pwrite",        3, iommap_nif_pwrite,        ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_sync",          2, iommap_nif_sync,          ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_truncate",      2, iommap_nif_truncate,      ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_advise",        4, iommap_nif_advise,        ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nif_position",      1, iommap_nif_position,      0},
+    {"nif_region_binary", 3, iommap_nif_region_binary, ERL_NIF_DIRTY_JOB_IO_BOUND}
 };
 
 ERL_NIF_INIT(iommap, nif_funcs, on_load, NULL, on_upgrade, NULL)

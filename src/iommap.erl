@@ -59,11 +59,33 @@
 %%%   <li>`sigbus' - Memory access fault (file truncated externally)</li>
 %%% </ul>
 %%%
+%%% == Zero-Copy Region Binaries ==
+%%%
+%%% `region_binary/3' returns a refcounted binary that points directly
+%%% into the mapped region with no data copy. The underlying mapping
+%%% is kept alive (its `munmap' is deferred) for as long as any such
+%%% binary, or any sub-binary derived from it, is reachable.
+%%%
+%%% Lifetime model: the NIF uses two resources internally. The handle
+%%% holds one reference to the mapping; `close/1' releases that
+%%% reference but does not call `munmap' if region binaries are still
+%%% outstanding. The mapping is unmapped only when the last reference
+%%% (handle ref + outstanding region binaries) is dropped.
+%%%
+%%% Truncation hazard: `region_binary/3' is unsafe to use against
+%%% files that may be truncated by external processes (or by
+%%% `iommap:truncate/2' shrinking past the binary's range) while a
+%%% returned binary is reachable. Reads of unmapped pages happen
+%%% outside any NIF call and can crash the BEAM with SIGBUS. Callers
+%%% needing safety against external mutation must use `pread/3'
+%%% (which copies and is unaffected).
+%%%
 %%% @end
 -module(iommap).
 
 -export([open/2, open/3, close/1]).
 -export([pread/3, pwrite/3]).
+-export([region_binary/3]).
 -export([sync/1, sync/2]).
 -export([truncate/2]).
 -export([advise/4]).
@@ -172,6 +194,33 @@ pwrite(Handle, Offset, Data) when Offset >= 0 ->
 pwrite(_, _, _) ->
     {error, badarg}.
 
+%% @doc Return a zero-copy refcounted binary view into the mapped region.
+%%
+%% Unlike `pread/3', no bytes are copied: the returned binary is a
+%% resource binary whose underlying memory is the page-cache backing
+%% the mapping. The mapping is kept alive for as long as the returned
+%% binary (or any sub-binary derived from it) remains reachable.
+%%
+%% This primitive is intended for hot zero-copy hand-off paths, e.g.
+%% passing the bytes to another NIF as `ErlNifBinary' without going
+%% through the BEAM heap.
+%%
+%% Reads of the returned binary occur outside any NIF call. If the
+%% underlying file is truncated (by an external process, or by
+%% `truncate/2' shrinking past the binary's range) while the binary
+%% is reachable, accessing it can crash the BEAM with SIGBUS. Use
+%% `pread/3' if safety against external mutation is required.
+-spec region_binary(Handle, Offset, Length) ->
+        {ok, binary()} | {error, Reason} when
+    Handle :: handle(),
+    Offset :: non_neg_integer(),
+    Length :: non_neg_integer(),
+    Reason :: badarg | closed | out_of_bounds.
+region_binary(Handle, Offset, Length) when Offset >= 0, Length >= 0 ->
+    nif_region_binary(Handle, Offset, Length);
+region_binary(_, _, _) ->
+    {error, badarg}.
+
 %% @doc Synchronize the memory mapping with the underlying file.
 %% @equiv sync(Handle, sync)
 -spec sync(Handle) -> ok | {error, term()} when
@@ -253,3 +302,7 @@ nif_advise(_Handle, _Offset, _Length, _Hint) -> ?NIF_NOT_LOADED.
 
 -spec nif_position(handle()) -> {ok, non_neg_integer()} | {error, term()}.
 nif_position(_Handle) -> ?NIF_NOT_LOADED.
+
+-spec nif_region_binary(handle(), non_neg_integer(), non_neg_integer()) ->
+        {ok, binary()} | {error, term()}.
+nif_region_binary(_Handle, _Offset, _Length) -> ?NIF_NOT_LOADED.

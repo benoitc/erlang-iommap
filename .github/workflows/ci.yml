@@ -84,6 +84,10 @@ jobs:
           release: "14.2"
           usesh: true
           prepare: |
+            # Refresh pcre2 first: the cached VM image ships an older
+            # libpcre2 than the `git` package in the latest repo expects
+            # (otherwise git fails with: PCRE2_10.47 not defined).
+            pkg install -y pcre2
             pkg install -y erlang-runtime28 rebar3 git
           run: |
             export PATH="/usr/local/lib/erlang28/bin:$PATH"
