@@ -1,6 +1,6 @@
 {application, iommap, [
     {description, "Memory-mapped file I/O NIF for Erlang"},
-    {vsn, "1.1.1"},
+    {vsn, "1.1.2"},
     {registered, []},
     {applications, [kernel, stdlib]},
     {env, []},

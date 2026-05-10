@@ -5,15 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.1] - 2026-05-10
+## [1.1.2] - 2026-05-10
 
 ### Fixed
 
-- SIGBUS handler chains to the previously-installed handler when
-  fired outside any iommap-protected region. The earlier handler
-  always longjmped through a thread-local sigjmp_buf even when no
-  sigsetjmp had run, which caused process segfaults when iommap was
-  loaded alongside other NIFs that perform mmap I/O.
 - SIGBUS handler no longer reads `__thread` storage on the signal
   path. `iommap_nif.so` is loaded via `dlopen`, so on FreeBSD (and
   any other platform whose dynamic loader allocates dlopened TLS
@@ -24,10 +19,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pthread_key_t` slot allocated eagerly by iommap NIF entry points;
   the handler does a plain `pthread_getspecific` and treats a NULL
   slot as "not in a protected region, chain to the previous
-  handler". This is the second half of the fix that made the
-  crashes only show up when iommap was paired with another NIF in
-  the same BEAM (the helper NIF was enough TLS pressure to push
-  iommap's slot out of the static-TLS reserve).
+  handler". This is the second half of the SIGBUS-handler fix
+  started in 1.1.1; the crash only showed up when iommap was
+  paired with another NIF in the same BEAM (enough TLS pressure
+  to push iommap's slot out of the static-TLS reserve).
+
+### Tests
+
+- New `iommap_two_nif_tests` module reproduces the FreeBSD segfault
+  inside iommap. A test-only helper NIF (`test/c_src/`) registers
+  its own resource types alongside iommap; the test runs the
+  region_binary load pattern in a tight loop, both inline and from
+  a dedicated worker process. Without the TLS fix this reliably
+  crashed BEAM on FreeBSD 14.2 and 14.4 in CI; with the fix, all
+  matrix entries pass.
+
+## [1.1.1] - 2026-05-10
+
+### Fixed
+
+- SIGBUS handler chains to the previously-installed handler when
+  fired outside any iommap-protected region. The earlier handler
+  always longjmped through a thread-local sigjmp_buf even when no
+  sigsetjmp had run, which caused process segfaults when iommap was
+  loaded alongside other NIFs that perform mmap I/O.
 - `IOMMAP_MODE_WRITE` now opens the file `O_RDWR`. mmap with
   PROT_WRITE requires a readable fd; the previous O_WRONLY broke
   write-only mode at mmap time.
@@ -42,13 +57,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `read_close_then_parse` and `many_open_close_cycles` cases
   cover the read-only `open → region_binary → close → use binary`
   pattern that downstream callers rely on.
-- New `iommap_two_nif_tests` module reproduces the FreeBSD segfault
-  inside iommap. A test-only helper NIF (`test/c_src/`) registers
-  its own resource types alongside iommap; the test runs the
-  region_binary load pattern in a tight loop, both inline and from
-  a dedicated worker process. Without the TLS fix this reliably
-  crashed BEAM on FreeBSD 14.2 and 14.4 in CI; with the fix, all
-  matrix entries pass.
 - FreeBSD CI now matrices 14.2 and 14.4.
 
 ## [1.1.0] - 2026-05-09
