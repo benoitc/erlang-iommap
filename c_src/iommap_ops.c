@@ -193,14 +193,20 @@ ERL_NIF_TERM iommap_nif_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         return enif_make_badarg(env);
     }
 
-    /* Determine open flags */
+    /* Determine open flags.
+     *
+     * mmap(2) requires the underlying fd to be readable even for
+     * pure-write mappings, because the kernel pages in existing
+     * file content before the first write. Opening O_WRONLY breaks
+     * mmap(MAP_SHARED, PROT_WRITE) on every platform we support;
+     * upgrade IOMMAP_MODE_WRITE to O_RDWR. */
     int open_flags = 0;
     switch (mode) {
         case IOMMAP_MODE_READ:
             open_flags = O_RDONLY;
             break;
         case IOMMAP_MODE_WRITE:
-            open_flags = O_WRONLY;
+            open_flags = O_RDWR;
             break;
         case IOMMAP_MODE_READ_WRITE:
             open_flags = O_RDWR;
@@ -345,6 +351,15 @@ ERL_NIF_TERM iommap_nif_pread(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
 
     iommap_mapping_t *m = handle->mapping;
 
+    /* Reject reads on write-only handles. The mmap protection bits
+     * for IOMMAP_MODE_WRITE do not include PROT_READ, so a memcpy
+     * from m->data would fault. Mirror the eacces returned by
+     * pwrite on read-only handles. */
+    if (!(handle->mode & IOMMAP_MODE_READ)) {
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_EACCES);
+    }
+
     /* Check bounds (overflow-safe) */
     if (offset > m->size || length > m->size - offset) {
         iommap_handle_unlock(handle);
@@ -423,13 +438,19 @@ ERL_NIF_TERM iommap_nif_pwrite(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
         return MAKE_ERROR(env, ATOM_OUT_OF_BOUNDS);
     }
 
-    /* Copy data with SIGBUS protection */
+    /* Copy data with SIGBUS protection. Mirror the pread shape:
+     * mark the protected region around the memcpy and clear it on
+     * both success and longjmp paths so SIGBUS arriving outside
+     * this window chains to the previously-installed handler. */
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
+        iommap_platform_enter_protected();
         memcpy((unsigned char *)m->data + offset, data_bin.data, data_bin.size);
+        iommap_platform_leave_protected();
     } else {
+        iommap_platform_leave_protected();
         iommap_handle_unlock(handle);
         return MAKE_ERROR(env, ATOM_SIGBUS);
     }
@@ -677,6 +698,14 @@ ERL_NIF_TERM iommap_nif_region_binary(ErlNifEnv *env, int argc,
     }
 
     iommap_mapping_t *m = handle->mapping;
+
+    /* Reject region_binary on write-only handles; the mapping has
+     * no PROT_READ and any access through the returned binary
+     * would fault. Mirror pwrite's eacces. */
+    if (!(handle->mode & IOMMAP_MODE_READ)) {
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_EACCES);
+    }
 
     if (offset > m->size || length > m->size - offset) {
         iommap_handle_unlock(handle);
