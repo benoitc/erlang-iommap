@@ -19,7 +19,9 @@
         "README.md",
         "LICENSE",
         "CHANGELOG.md",
-        "Makefile"
+        "Makefile",
+        "do_cmake.sh",
+        "do_iommap.sh"
     ]},
     {build_tools, ["rebar3"]},
     {exclude_files, ["priv"]}
