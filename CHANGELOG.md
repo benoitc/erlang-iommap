@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-05-10
+
+### Fixed
+
+- SIGBUS handler no longer stores the previous handler's function
+  pointer. `on_upgrade` re-ran `on_load`, which unconditionally
+  re-installed the handler and saved iommap's own `sigbus_handler` as
+  `original_sigbus_action`; the chain logic then recursed into itself
+  on the next out-of-protected SIGBUS. Even with self-recursion fixed,
+  storing the function pointer was unsafe across hot upgrade because
+  the captured pointer could land in another iommap DSO image and
+  dangle into freed text after `code:purge`. The handler now records
+  only a category (`PRIOR_DFL`, `PRIOR_IGN`, or `PRIOR_OTHER`) and
+  re-raises through a preinitialized `sigaction` template at signal
+  time. Install is one-shot per DSO and a new `on_unload` callback
+  restores `SIG_DFL` or `SIG_IGN` when iommap's handler is still
+  active. Trade-offs (no chaining to a third-party SIGBUS handler, no
+  third-party-handler restoration, single-DSO-lifetime `SIG_IGN`
+  preservation) are documented in `guides/features.md`.
+- `iommap_handle_alloc` no longer calls `pthread_rwlock_destroy` on a
+  never-initialized lock when `pthread_rwlock_init` fails. A new
+  `rwlock_initialized` flag gates the destroy in the handle
+  destructor.
+
+### Tests
+
+- New `iommap_lifecycle_tests` module covers in-protected SIGBUS still
+  being caught after the handler rewrite, and a basic round-trip after
+  `code:load_file/1` (exercises the `on_upgrade` path).
+
 ## [1.1.2] - 2026-05-10
 
 ### Fixed
