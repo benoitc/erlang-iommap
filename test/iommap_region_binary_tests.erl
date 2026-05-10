@@ -33,7 +33,11 @@ iommap_region_binary_test_() ->
           {"close while many binaries outstanding",
            ?_test(close_with_outstanding(TestDir))},
           {"random open/region/close fuzz",
-           {timeout, 60, ?_test(random_fuzz(TestDir))}}
+           {timeout, 60, ?_test(random_fuzz(TestDir))}},
+          {"open-read, region, close, parse pattern",
+           ?_test(read_close_then_parse(TestDir))},
+          {"many open/region/close cycles, no leak",
+           {timeout, 60, ?_test(many_open_close_cycles(TestDir))}}
          ]
      end}.
 
@@ -171,6 +175,54 @@ random_fuzz(TestDir) ->
     rand:seed(exsss, {1, 2, 3}),
     Iters = 200,
     fuzz_loop(Path, Pattern, Size, Iters, []).
+
+%% Mirrors the erllama disk-tier load pattern: file is created with
+%% non-iommap I/O, opened read-only with iommap, region_binary taken,
+%% handle closed inside the same call, binary returned to a downstream
+%% parser that touches every byte.
+%%
+%% This is the pattern that segfaults the BEAM on FreeBSD when run as
+%% part of a larger eunit suite; this test reproduces it inside iommap
+%% so the fix can be developed and verified here.
+read_close_then_parse(TestDir) ->
+    Path = filename:join(TestDir, "read_close.dat"),
+    Data = <<"erllama-pattern: ", (crypto:strong_rand_bytes(8192))/binary>>,
+    ok = file:write_file(Path, Data),
+    {ok, H} = iommap:open(Path, read, []),
+    {ok, B} =
+        try
+            iommap:region_binary(H, 0, byte_size(Data))
+        after
+            iommap:close(H)
+        end,
+    %% Touch every byte so the BEAM hits all mapped pages, including
+    %% any page faulted in lazily after close.
+    Crc = erlang:crc32(B),
+    Expected = erlang:crc32(Data),
+    ?assertEqual(Expected, Crc),
+    ?assertEqual(Data, B).
+
+%% Many open / region / close / parse cycles in a tight loop. Stresses
+%% the resource lifetime path that previously crashed FreeBSD.
+many_open_close_cycles(TestDir) ->
+    Path = filename:join(TestDir, "cycles.dat"),
+    Data = crypto:strong_rand_bytes(64 * 1024),
+    ok = file:write_file(Path, Data),
+    Iters = 200,
+    Expected = erlang:crc32(Data),
+    lists:foreach(
+        fun(_) ->
+            {ok, H} = iommap:open(Path, read, []),
+            {ok, B} =
+                try
+                    iommap:region_binary(H, 0, byte_size(Data))
+                after
+                    iommap:close(H)
+                end,
+            ?assertEqual(Expected, erlang:crc32(B))
+        end,
+        lists:seq(1, Iters)
+    ).
 
 fuzz_loop(_Path, _Pattern, _Size, 0, _Held) ->
     erlang:garbage_collect(),

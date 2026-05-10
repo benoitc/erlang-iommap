@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-05-10
+
+### Fixed
+
+- SIGBUS handler chains to the previously-installed handler when
+  fired outside any iommap-protected region. The earlier handler
+  always longjmped through a thread-local sigjmp_buf even when no
+  sigsetjmp had run, which caused process segfaults when iommap was
+  loaded alongside other NIFs that perform mmap I/O.
+- `IOMMAP_MODE_WRITE` now opens the file `O_RDWR`. mmap with
+  PROT_WRITE requires a readable fd; the previous O_WRONLY broke
+  write-only mode at mmap time.
+- `pread/3` and `region_binary/3` reject write-only handles with
+  `eacces`, matching the symmetric guard already in `pwrite/3`.
+- `pwrite/3` now wraps its memcpy in the same enter/leave protected
+  pair as `pread/3` so a SIGBUS during pwrite is reported as
+  `{error, sigbus}` rather than chained to the default handler.
+
+### Tests
+
+- New `read_close_then_parse` and `many_open_close_cycles` cases
+  cover the read-only `open → region_binary → close → use binary`
+  pattern that downstream callers rely on.
+- FreeBSD CI now matrices 14.2 and 14.4.
+
 ## [1.1.0] - 2026-05-09
 
 ### Added

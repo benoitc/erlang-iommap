@@ -22,23 +22,45 @@
     #include <linux/falloc.h>
 #endif
 
-/* Thread-local SIGBUS handling */
+/* Thread-local SIGBUS state. The handler only longjmps when the
+ * calling thread is inside a protected region; otherwise it
+ * chains to the original handler. */
 static __thread volatile sig_atomic_t sigbus_caught = 0;
+static __thread volatile sig_atomic_t sigbus_protected = 0;
 static __thread sigjmp_buf sigbus_jmpbuf;
 
-/* Original SIGBUS handler */
 static struct sigaction original_sigbus_action;
 
-/* SIGBUS signal handler */
 static void sigbus_handler(int sig, siginfo_t *info, void *context)
 {
-    (void)info;
-    (void)context;
-
-    if (sig == SIGBUS) {
+    if (sig != SIGBUS) {
+        return;
+    }
+    if (sigbus_protected) {
         sigbus_caught = 1;
         siglongjmp(sigbus_jmpbuf, 1);
     }
+    if (original_sigbus_action.sa_flags & SA_SIGINFO) {
+        if (original_sigbus_action.sa_sigaction != NULL) {
+            original_sigbus_action.sa_sigaction(sig, info, context);
+            return;
+        }
+    } else {
+        if (original_sigbus_action.sa_handler == SIG_IGN) {
+            return;
+        }
+        if (original_sigbus_action.sa_handler != NULL &&
+            original_sigbus_action.sa_handler != SIG_DFL) {
+            original_sigbus_action.sa_handler(sig);
+            return;
+        }
+    }
+    struct sigaction dfl;
+    memset(&dfl, 0, sizeof(dfl));
+    dfl.sa_handler = SIG_DFL;
+    sigemptyset(&dfl.sa_mask);
+    sigaction(SIGBUS, &dfl, NULL);
+    raise(SIGBUS);
 }
 
 void iommap_platform_init_sigbus_handler(void)
@@ -65,6 +87,16 @@ void iommap_platform_clear_sigbus(void)
 void *iommap_platform_get_sigbus_jmpbuf(void)
 {
     return (void *)sigbus_jmpbuf;
+}
+
+void iommap_platform_enter_protected(void)
+{
+    sigbus_protected = 1;
+}
+
+void iommap_platform_leave_protected(void)
+{
+    sigbus_protected = 0;
 }
 
 int iommap_platform_fallocate(int fd, size_t size)

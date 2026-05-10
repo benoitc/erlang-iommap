@@ -118,4 +118,16 @@ void iommap_platform_clear_sigbus(void);
  */
 void *iommap_platform_get_sigbus_jmpbuf(void);
 
+/**
+ * Enter a SIGBUS-protected region on the calling thread. Pair with
+ * iommap_platform_leave_protected. Outside any protected region,
+ * SIGBUS chains to the original handler.
+ */
+void iommap_platform_enter_protected(void);
+
+/**
+ * Leave the SIGBUS-protected region on the calling thread.
+ */
+void iommap_platform_leave_protected(void);
+
 #endif /* IOMMAP_PLATFORM_H */

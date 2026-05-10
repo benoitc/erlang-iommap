@@ -193,14 +193,15 @@ ERL_NIF_TERM iommap_nif_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         return enif_make_badarg(env);
     }
 
-    /* Determine open flags */
+    /* mmap with PROT_WRITE needs a readable fd, so write mode opens
+     * O_RDWR. */
     int open_flags = 0;
     switch (mode) {
         case IOMMAP_MODE_READ:
             open_flags = O_RDONLY;
             break;
         case IOMMAP_MODE_WRITE:
-            open_flags = O_WRONLY;
+            open_flags = O_RDWR;
             break;
         case IOMMAP_MODE_READ_WRITE:
             open_flags = O_RDWR;
@@ -345,13 +346,16 @@ ERL_NIF_TERM iommap_nif_pread(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
 
     iommap_mapping_t *m = handle->mapping;
 
-    /* Check bounds (overflow-safe) */
+    if (!(handle->mode & IOMMAP_MODE_READ)) {
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_EACCES);
+    }
+
     if (offset > m->size || length > m->size - offset) {
         iommap_handle_unlock(handle);
         return MAKE_ERROR(env, ATOM_OUT_OF_BOUNDS);
     }
 
-    /* Allocate binary */
     ERL_NIF_TERM bin_term;
     unsigned char *bin_data = enif_make_new_binary(env, length, &bin_term);
     if (bin_data == NULL) {
@@ -359,13 +363,15 @@ ERL_NIF_TERM iommap_nif_pread(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
         return MAKE_ERROR(env, ATOM_ENOMEM);
     }
 
-    /* Copy data with SIGBUS protection */
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
+        iommap_platform_enter_protected();
         memcpy(bin_data, (unsigned char *)m->data + offset, length);
+        iommap_platform_leave_protected();
     } else {
+        iommap_platform_leave_protected();
         iommap_handle_unlock(handle);
         return MAKE_ERROR(env, ATOM_SIGBUS);
     }
@@ -416,13 +422,15 @@ ERL_NIF_TERM iommap_nif_pwrite(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
         return MAKE_ERROR(env, ATOM_OUT_OF_BOUNDS);
     }
 
-    /* Copy data with SIGBUS protection */
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
+        iommap_platform_enter_protected();
         memcpy((unsigned char *)m->data + offset, data_bin.data, data_bin.size);
+        iommap_platform_leave_protected();
     } else {
+        iommap_platform_leave_protected();
         iommap_handle_unlock(handle);
         return MAKE_ERROR(env, ATOM_SIGBUS);
     }
@@ -670,6 +678,11 @@ ERL_NIF_TERM iommap_nif_region_binary(ErlNifEnv *env, int argc,
     }
 
     iommap_mapping_t *m = handle->mapping;
+
+    if (!(handle->mode & IOMMAP_MODE_READ)) {
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_EACCES);
+    }
 
     if (offset > m->size || length > m->size - offset) {
         iommap_handle_unlock(handle);

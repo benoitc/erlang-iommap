@@ -74,14 +74,18 @@ jobs:
 
   # FreeBSD
   freebsd:
-    name: FreeBSD 14.2 OTP-28
+    name: FreeBSD ${{ matrix.release }} OTP-28
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ["14.2", "14.4"]
     steps:
       - uses: actions/checkout@v4
       - name: Test on FreeBSD
         uses: vmactions/freebsd-vm@v1
         with:
-          release: "14.2"
+          release: ${{ matrix.release }}
           usesh: true
           prepare: |
             # Refresh pcre2 first: the cached VM image ships an older
