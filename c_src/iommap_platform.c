@@ -50,7 +50,39 @@ typedef struct {
 static pthread_key_t iommap_tls_key;
 static pthread_once_t iommap_tls_key_once = PTHREAD_ONCE_INIT;
 
-static struct sigaction original_sigbus_action;
+/* SIGBUS install/restore state.
+ *
+ * We deliberately do NOT store a function pointer for any prior handler.
+ * Storing one would be unsafe across NIF hot upgrade: the new DSO would
+ * capture the old DSO's `sigbus_handler` as its prior handler, and after
+ * the old DSO is purged that pointer would dangle into freed text.
+ *
+ * Instead we record only a category of the prior disposition. At signal
+ * time we use the category to decide between "swallow" (PRIOR_IGN) and
+ * "re-raise default" (PRIOR_DFL or PRIOR_OTHER) — and we re-raise via a
+ * preinitialized `struct sigaction` template, never with memset/sigemptyset
+ * inside async-signal context.
+ *
+ * Trade-off: PRIOR_OTHER means we never chain to a pre-existing third-party
+ * handler. This loses co-existence with another mmap-using NIF that
+ * installed its own SIGBUS handler before iommap. See guides/features.md. */
+typedef enum {
+    PRIOR_DFL   = 0,   /* default action -> re-raise default     */
+    PRIOR_IGN   = 1,   /* SIG_IGN -> swallow                     */
+    PRIOR_OTHER = 2    /* some other handler -> re-raise default */
+} prior_disposition_t;
+
+/* Read in signal context, written in install. sig_atomic_t gives a
+ * signal-safe representation; the enum values fit. */
+static volatile sig_atomic_t prior_disposition = PRIOR_DFL;
+
+/* Preinitialized at install time so the signal handler can do
+ *   sigaction(SIGBUS, &sigbus_default_action, NULL);
+ *   raise(SIGBUS);
+ * without memset/sigemptyset in async-signal context. */
+static struct sigaction sigbus_default_action;
+
+static bool iommap_sigbus_installed = false;
 
 static void iommap_tls_destructor(void *arg)
 {
@@ -82,6 +114,8 @@ static iommap_tls_t *iommap_tls_get_or_alloc(void)
 
 static void sigbus_handler(int sig, siginfo_t *info, void *context)
 {
+    (void)info;
+    (void)context;
     if (sig != SIGBUS) {
         return;
     }
@@ -90,40 +124,90 @@ static void sigbus_handler(int sig, siginfo_t *info, void *context)
         tls->caught = 1;
         siglongjmp(tls->jmpbuf, 1);
     }
-    if (original_sigbus_action.sa_flags & SA_SIGINFO) {
-        if (original_sigbus_action.sa_sigaction != NULL) {
-            original_sigbus_action.sa_sigaction(sig, info, context);
-            return;
-        }
-    } else {
-        if (original_sigbus_action.sa_handler == SIG_IGN) {
-            return;
-        }
-        if (original_sigbus_action.sa_handler != NULL &&
-            original_sigbus_action.sa_handler != SIG_DFL) {
-            original_sigbus_action.sa_handler(sig);
-            return;
-        }
+    /* Out of protected region: dispatch on category, no pointer deref. */
+    sig_atomic_t pd = prior_disposition;
+    if (pd == PRIOR_IGN) {
+        return;
     }
-    struct sigaction dfl;
-    memset(&dfl, 0, sizeof(dfl));
-    dfl.sa_handler = SIG_DFL;
-    sigemptyset(&dfl.sa_mask);
-    sigaction(SIGBUS, &dfl, NULL);
+    /* PRIOR_DFL or PRIOR_OTHER: re-raise via the preinitialized template. */
+    sigaction(SIGBUS, &sigbus_default_action, NULL);
     raise(SIGBUS);
 }
 
-void iommap_platform_init_sigbus_handler(void)
+int iommap_platform_init_sigbus_handler(void)
 {
     (void)pthread_once(&iommap_tls_key_once, iommap_tls_key_init);
 
-    struct sigaction sa;
+    if (iommap_sigbus_installed) {
+        /* Same DSO, second on_load/on_upgrade. No-op so we don't
+         * overwrite our captured prior_disposition with our own
+         * handler (the self-recursion bug). */
+        return 0;
+    }
+
+    /* Build the default-action template BEFORE publishing our handler,
+     * so a SIGBUS during install never sees a half-initialized template. */
+    memset(&sigbus_default_action, 0, sizeof(sigbus_default_action));
+    sigbus_default_action.sa_handler = SIG_DFL;
+    sigemptyset(&sigbus_default_action.sa_mask);
+
+    struct sigaction sa, old;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = sigbus_handler;
     sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
 
-    sigaction(SIGBUS, &sa, &original_sigbus_action);
+    if (sigaction(SIGBUS, &sa, &old) != 0) {
+        return -1;
+    }
+
+    /* Categorize the previous disposition. There is a small window
+     * between the sigaction() above and this assignment where a SIGBUS
+     * would see the default PRIOR_DFL even if the original was SIG_IGN.
+     * This is acceptable during NIF load. */
+    if (old.sa_flags & SA_SIGINFO) {
+        prior_disposition =
+            (old.sa_sigaction == NULL) ? PRIOR_DFL : PRIOR_OTHER;
+    } else if (old.sa_handler == SIG_IGN) {
+        prior_disposition = PRIOR_IGN;
+    } else if (old.sa_handler == SIG_DFL || old.sa_handler == NULL) {
+        prior_disposition = PRIOR_DFL;
+    } else {
+        prior_disposition = PRIOR_OTHER;
+    }
+
+    iommap_sigbus_installed = true;
+    return 0;
+}
+
+void iommap_platform_uninstall_sigbus_handler(void)
+{
+    if (!iommap_sigbus_installed) {
+        return;
+    }
+
+    /* Restore only if our handler is still the active one. Another
+     * library may have taken over since we installed; clobbering their
+     * handler would be worse than a no-op. */
+    struct sigaction current;
+    if (sigaction(SIGBUS, NULL, &current) == 0) {
+        bool ours = (current.sa_flags & SA_SIGINFO)
+                    ? (current.sa_sigaction == sigbus_handler)
+                    : false;
+        if (ours) {
+            struct sigaction restore;
+            memset(&restore, 0, sizeof(restore));
+            /* Lossy restore: SIG_IGN if the original was ignored,
+             * otherwise SIG_DFL. We never restore a third-party handler
+             * (we don't store its pointer — see guides/features.md). */
+            restore.sa_handler =
+                (prior_disposition == PRIOR_IGN) ? SIG_IGN : SIG_DFL;
+            sigemptyset(&restore.sa_mask);
+            (void)sigaction(SIGBUS, &restore, NULL);
+        }
+    }
+
+    iommap_sigbus_installed = false;
 }
 
 bool iommap_platform_check_sigbus(void)

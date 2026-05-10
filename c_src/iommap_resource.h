@@ -79,6 +79,7 @@ typedef struct {
  */
 typedef struct {
     pthread_rwlock_t rwlock;
+    bool rwlock_initialized;    /* true once pthread_rwlock_init succeeded */
     iommap_mapping_t *mapping;  /* NULL after close */
     iommap_mode_t mode;
     bool closed;
