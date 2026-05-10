@@ -359,13 +359,20 @@ ERL_NIF_TERM iommap_nif_pread(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
         return MAKE_ERROR(env, ATOM_ENOMEM);
     }
 
-    /* Copy data with SIGBUS protection */
+    /* Copy data with SIGBUS protection. Enter the protected region
+     * BEFORE sigsetjmp so the handler knows to siglongjmp into our
+     * jmpbuf only while this region is active; leave immediately
+     * after the copy so SIGBUS delivered later (e.g. during BEAM
+     * teardown) chains to the original handler instead. */
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
+        iommap_platform_enter_protected();
         memcpy(bin_data, (unsigned char *)m->data + offset, length);
+        iommap_platform_leave_protected();
     } else {
+        iommap_platform_leave_protected();
         iommap_handle_unlock(handle);
         return MAKE_ERROR(env, ATOM_SIGBUS);
     }
