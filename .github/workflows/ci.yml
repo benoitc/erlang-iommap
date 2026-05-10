@@ -92,7 +92,7 @@ jobs:
             # libpcre2 than the `git` package in the latest repo expects
             # (otherwise git fails with: PCRE2_10.47 not defined).
             pkg install -y pcre2
-            pkg install -y erlang-runtime28 rebar3 git
+            pkg install -y erlang-runtime28 rebar3 git cmake
           run: |
             export PATH="/usr/local/lib/erlang28/bin:$PATH"
             echo "Erlang version:"
@@ -116,7 +116,7 @@ jobs:
           usesh: true
           prepare: |
             set -eux
-            pkg_add git gmake erlang-27.3.4.3v0
+            pkg_add git gmake cmake erlang-27.3.4.3v0
             # rebar3 not in OpenBSD packages - download directly
             ftp -o /usr/local/bin/rebar3 https://s3.amazonaws.com/rebar3/rebar3
             chmod +x /usr/local/bin/rebar3
