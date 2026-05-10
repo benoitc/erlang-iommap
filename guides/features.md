@@ -176,3 +176,21 @@ Errors are returned as `{error, Reason}` tuples:
 ## SIGBUS Protection
 
 The NIF installs a SIGBUS handler to protect against crashes when the underlying file is truncated externally while the mapping exists. If a SIGBUS occurs during read/write, `{error, sigbus}` is returned instead of crashing the VM.
+
+### Limitations of the SIGBUS handler
+
+To remain signal-safe across NIF hot upgrades, iommap deliberately does not store any function pointer for a pre-existing SIGBUS handler. As a consequence:
+
+- **No chaining to a third-party SIGBUS handler.** When a SIGBUS fires outside iommap's protected region, iommap re-raises with the default action (typically a coredump and process termination). If another loaded NIF had installed its own SIGBUS handler before iommap, that library's recoverable SIGBUS inside its own protected region will reach iommap's handler first and terminate the VM. Co-existence between two SIGBUS-using NIFs in the same process is not solved.
+- **No third-party handler restoration at unload.** When iommap is unloaded, only `SIG_DFL` or `SIG_IGN` is restored. A library that installed its own SIGBUS handler before iommap will need to reinstall after iommap is unloaded.
+- **`SIG_IGN` preservation is single-DSO-lifetime only.** In the hot-upgrade path the new iommap DSO loads while the old DSO is still installed, so the new DSO sees the old DSO's handler and treats it as "other" rather than the original `SIG_IGN`. After the new DSO unloads, the original `SIG_IGN` is not restored — `SIG_DFL` is.
+
+If you need to verify clean unload behaviour locally, a minimal recipe is:
+
+```sh
+erl -noshell -pa _build/default/lib/iommap/ebin -eval '
+    {ok, _} = iommap:open("/tmp/probe.dat", read_write, [create, {size, 4096}]),
+    halt(0).'
+```
+
+The VM exit triggers the unload callback. This is a clean-exit smoke; it does not externally observe the restored disposition.

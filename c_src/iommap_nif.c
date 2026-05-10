@@ -33,7 +33,9 @@ static int on_load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info)
     }
 
     /* Initialize SIGBUS handler */
-    iommap_platform_init_sigbus_handler();
+    if (iommap_platform_init_sigbus_handler() != 0) {
+        return -1;
+    }
 
     return 0;
 }
@@ -46,6 +48,16 @@ static int on_upgrade(ErlNifEnv *env, void **priv_data, void **old_priv_data,
 {
     (void)old_priv_data;
     return on_load(env, priv_data, load_info);
+}
+
+/**
+ * NIF unload callback. Restores the SIGBUS disposition.
+ */
+static void on_unload(ErlNifEnv *env, void *priv_data)
+{
+    (void)env;
+    (void)priv_data;
+    iommap_platform_uninstall_sigbus_handler();
 }
 
 /**
@@ -63,4 +75,4 @@ static ErlNifFunc nif_funcs[] = {
     {"nif_region_binary", 3, iommap_nif_region_binary, ERL_NIF_DIRTY_JOB_IO_BOUND}
 };
 
-ERL_NIF_INIT(iommap, nif_funcs, on_load, NULL, on_upgrade, NULL)
+ERL_NIF_INIT(iommap, nif_funcs, on_load, NULL, on_upgrade, on_unload)

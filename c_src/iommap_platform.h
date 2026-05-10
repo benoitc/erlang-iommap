@@ -98,8 +98,24 @@ int iommap_platform_fsize(int fd, size_t *size);
 /**
  * Initialize SIGBUS handler for safe memory access.
  * Must be called once at NIF load.
+ *
+ * @return 0 on success, -1 on failure (sigaction failed)
  */
-void iommap_platform_init_sigbus_handler(void);
+int iommap_platform_init_sigbus_handler(void);
+
+/**
+ * Restore the SIGBUS disposition that was active before this NIF
+ * installed its handler. Called from on_unload.
+ *
+ * Restoration is best-effort and lossy: only SIG_DFL or SIG_IGN can be
+ * restored. A pre-existing third-party handler is replaced with
+ * SIG_DFL — see guides/features.md for the rationale (signal-safety
+ * across NIF upgrade requires not storing function pointers).
+ *
+ * No-op if the install never happened or another library has since
+ * taken over the SIGBUS handler.
+ */
+void iommap_platform_uninstall_sigbus_handler(void);
 
 /**
  * Check if a SIGBUS occurred during the last protected operation.

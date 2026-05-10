@@ -56,7 +56,10 @@ static void iommap_handle_destructor(ErlNifEnv *env, void *obj)
         h->mapping = NULL;
     }
 
-    pthread_rwlock_destroy(&h->rwlock);
+    if (h->rwlock_initialized) {
+        pthread_rwlock_destroy(&h->rwlock);
+        h->rwlock_initialized = false;
+    }
 }
 
 int iommap_resource_init(ErlNifEnv *env)
@@ -113,9 +116,12 @@ iommap_handle_t *iommap_handle_alloc(ErlNifEnv *env,
     memset(h, 0, sizeof(iommap_handle_t));
 
     if (pthread_rwlock_init(&h->rwlock, NULL) != 0) {
+        /* Destructor will see rwlock_initialized == false and skip
+         * pthread_rwlock_destroy on an uninitialized lock. */
         enif_release_resource(h);
         return NULL;
     }
+    h->rwlock_initialized = true;
 
     enif_keep_resource(mapping);
     h->mapping = mapping;
