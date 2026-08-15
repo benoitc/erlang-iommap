@@ -37,7 +37,9 @@ iommap_region_binary_test_() ->
           {"open-read, region, close, parse pattern",
            ?_test(read_close_then_parse(TestDir))},
           {"many open/region/close cycles, no leak",
-           {timeout, 60, ?_test(many_open_close_cycles(TestDir))}}
+           {timeout, 60, ?_test(many_open_close_cycles(TestDir))}},
+          {"erllama-shape: read, region, close, NIF readback",
+           ?_test(erllama_first_test_repro(TestDir))}
          ]
      end}.
 
@@ -223,6 +225,49 @@ many_open_close_cycles(TestDir) ->
         end,
         lists:seq(1, Iters)
     ).
+
+%% Reproduces the failing erllama_cache_disk_srv_iommap_tests first
+%% case as a single iommap-only test. erllama opens a file in `read`
+%% mode, takes a region_binary, closes the handle, then hands the
+%% binary to a NIF (erllama_nif:crc32c/1) that walks the bytes via
+%% enif_inspect_binary. On FreeBSD the BEAM SIGSEGVs (exit 139) while
+%% the NIF is reading.
+%%
+%% The existing read_close_then_parse uses erlang:crc32, which is a
+%% BIF and goes through BEAM's BIF reader path; it succeeds. This
+%% test uses crypto:hash/2 instead, which is itself a NIF that calls
+%% enif_inspect_binary + iterates — the same shape erllama hits.
+erllama_first_test_repro(TestDir) ->
+    Path = filename:join(TestDir, "erllama_repro.dat"),
+    Header = binary:copy(<<16#AB:8>>, 72),
+    Payload = <<"this loads via iommap">>,
+    Bytes = <<Header/binary, Payload/binary>>,
+    ok = file:write_file(Path, Bytes),
+    {ok, H} = iommap:open(Path, read, []),
+    {ok, B} =
+        try
+            iommap:region_binary(H, 0, byte_size(Bytes))
+        after
+            iommap:close(H)
+        end,
+    %% Take sub-binary SLICES of the region_binary (mirrors
+    %% erllama's kvc parse path which extracts header + payload via
+    %% binary:part/3) and feed each slice to a NIF byte-walker.
+    %% crypto:hash is a NIF that does enif_inspect_binary + reads.
+    HeaderSlice = binary:part(B, 0, 72),
+    PayloadSlice = binary:part(B, 72, byte_size(Payload)),
+    HSum = crypto:hash(sha256, HeaderSlice),
+    PSum = crypto:hash(sha256, PayloadSlice),
+    %% Same shape with crc32 (BIF, not NIF) — should give matching
+    %% comparison from a non-NIF reader path.
+    HCrc = erlang:crc32(HeaderSlice),
+    PCrc = erlang:crc32(PayloadSlice),
+    ?assertEqual(32, byte_size(HSum)),
+    ?assertEqual(32, byte_size(PSum)),
+    ?assertEqual(HCrc, erlang:crc32(Header)),
+    ?assertEqual(PCrc, erlang:crc32(Payload)),
+    ?assertEqual(Header, HeaderSlice),
+    ?assertEqual(Payload, PayloadSlice).
 
 fuzz_loop(_Path, _Pattern, _Size, 0, _Held) ->
     erlang:garbage_collect(),
