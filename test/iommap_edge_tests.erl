@@ -149,8 +149,10 @@ invalid_args(TestDir) ->
     Path = filename:join(TestDir, "invalid.dat"),
     {ok, H} = iommap:open(Path, read_write, [create, {size, 100}]),
 
-    %% Negative offsets should be rejected at Erlang level
-    ?assertEqual({error, badarg}, iommap:pread(H, -1, 10)),
-    ?assertEqual({error, badarg}, iommap:pwrite(H, -1, <<"test">>)),
+    %% Negative offsets should be rejected at Erlang level. The value
+    %% is built at runtime so dialyzer does not flag the spec violation.
+    Neg = list_to_integer("-1"),
+    ?assertEqual({error, badarg}, iommap:pread(H, Neg, 10)),
+    ?assertEqual({error, badarg}, iommap:pwrite(H, Neg, <<"test">>)),
 
     ok = iommap:close(H).
