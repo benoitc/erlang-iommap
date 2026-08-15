@@ -21,6 +21,9 @@ jobs:
       matrix:
         otp: ["26", "27", "28"]
         rebar3: ['3.24.0']
+        include:
+          - otp: "29"
+            rebar3: '3.27.0'
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1

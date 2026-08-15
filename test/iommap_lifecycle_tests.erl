@@ -44,7 +44,9 @@ iommap_lifecycle_test_() ->
             [{"sigbus still caught after install rewrite",
               fun() -> sigbus_in_protected(TestDir) end} || SigbusReliable],
             [{"round-trip after code:load_file/1",
-              fun() -> roundtrip_after_reload(TestDir) end}]
+              fun() -> roundtrip_after_reload(TestDir) end}],
+            [{"sigbus still caught after upgrade + purge",
+              fun() -> sigbus_after_upgrade_purge(TestDir) end} || SigbusReliable]
            ])
      end}.
 
@@ -79,4 +81,24 @@ roundtrip_after_reload(TestDir) ->
     {ok, H} = iommap:open(Path, read_write, [create, {size, 1024}]),
     ok = iommap:pwrite(H, 0, <<"after-reload">>),
     {ok, <<"after-reload">>} = iommap:pread(H, 0, byte_size(<<"after-reload">>)),
+    ok = iommap:close(H).
+
+%% Test C: code:load_file/1 followed by code:purge/1 runs the old module's
+%% on_unload while the new module is live. dlopen of the same .so path
+%% returns the same image, so both share the NIF's statics; the unload
+%% must not tear down the SIGBUS handler or the per-thread state the
+%% live module still uses. Before the load refcount this crashed the VM
+%% on the next SIGBUS and made pread/pwrite return {error, enomem}.
+sigbus_after_upgrade_purge(TestDir) ->
+    %% Test B may have left old code behind; purge it first.
+    _ = code:purge(iommap),
+    {module, iommap} = code:load_file(iommap),
+    _ = code:purge(iommap),
+    Path = filename:join(TestDir, "sigbus_after_purge.dat"),
+    {ok, H} = iommap:open(Path, read_write, [create, {size, 4096}]),
+    ok = iommap:pwrite(H, 0, <<"data">>),
+    {ok, Fd} = file:open(Path, [write]),
+    ok = file:truncate(Fd),
+    ok = file:close(Fd),
+    ?assertEqual({error, sigbus}, iommap:pread(H, 0, 4096)),
     ok = iommap:close(H).

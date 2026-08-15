@@ -79,14 +79,14 @@ ok = iommap:close(Handle).
 
 | Option | Description |
 |--------|-------------|
-| `{size, N}` | Initial size for new files (required with `create`) |
+| `{size, N}` | Grow the file to N bytes if it is smaller (required with `create`); never shrinks an existing file |
 | `shared` | Changes visible to other processes (default) |
 | `private` | Copy-on-write, changes are private |
 | `lock` | Lock pages in memory (mlock) |
 | `populate` | Prefault pages (Linux only) |
 | `nocache` | Disable page caching (macOS only) |
-| `create` | Create file if it doesn't exist |
-| `truncate` | Truncate existing file |
+| `create` | Create file if it doesn't exist (not allowed in `read` mode) |
+| `truncate` | Truncate existing file (not allowed in `read` mode) |
 
 ### Reading and Writing
 

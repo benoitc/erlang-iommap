@@ -71,7 +71,9 @@ static ErlNifFunc nif_funcs[] = {
     {"nif_sync",          2, iommap_nif_sync,          ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nif_truncate",      2, iommap_nif_truncate,      ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nif_advise",        4, iommap_nif_advise,        ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nif_position",      1, iommap_nif_position,      0},
+    /* position takes the handle rwlock and can wait behind a writer in
+     * a long msync/fallocate, so it must not run on a normal scheduler. */
+    {"nif_position",      1, iommap_nif_position,      ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nif_region_binary", 3, iommap_nif_region_binary, ERL_NIF_DIRTY_JOB_IO_BOUND}
 };
 
