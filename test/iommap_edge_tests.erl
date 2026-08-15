@@ -2,6 +2,7 @@
 -module(iommap_edge_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 %% Test fixtures
 setup() ->
@@ -29,7 +30,11 @@ iommap_edge_test_() ->
           {"truncate shrink", fun() -> truncate_shrink(TestDir) end},
           {"advise operations", fun() -> advise_ops(TestDir) end},
           {"file not found", fun() -> file_not_found(TestDir) end},
-          {"invalid arguments", fun() -> invalid_args(TestDir) end}
+          {"invalid arguments", fun() -> invalid_args(TestDir) end},
+          {"read mode rejects create/truncate", fun() -> read_mode_options(TestDir) end},
+          {"size option never shrinks", fun() -> size_never_shrinks(TestDir) end},
+          {"embedded nul in path", fun() -> nul_in_path(TestDir) end},
+          {"unicode path", fun() -> unicode_path(TestDir) end}
          ]
      end}.
 
@@ -156,3 +161,55 @@ invalid_args(TestDir) ->
     ?assertEqual({error, badarg}, iommap:pwrite(H, Neg, <<"test">>)),
 
     ok = iommap:close(H).
+
+read_mode_options(TestDir) ->
+    Path = filename:join(TestDir, "ro_opts.dat"),
+    ok = file:write_file(Path, <<"0123456789">>),
+
+    %% O_RDONLY|O_TRUNC truncates the file on Linux; make sure we
+    %% refuse before touching the file.
+    ?assertEqual({error, einval}, iommap:open(Path, read, [truncate])),
+    ?assertEqual({ok, <<"0123456789">>}, file:read_file(Path)),
+
+    %% O_RDONLY|O_CREAT would leave an empty file behind.
+    Missing = filename:join(TestDir, "ro_missing.dat"),
+    ?assertEqual({error, einval}, iommap:open(Missing, read, [create, {size, 10}])),
+    ?assertEqual({error, enoent}, file:read_file(Missing)),
+
+    {ok, H} = iommap:open(Path, read, []),
+    ?assertEqual({ok, <<"0123456789">>}, iommap:pread(H, 0, 10)),
+    ok = iommap:close(H).
+
+size_never_shrinks(TestDir) ->
+    Path = filename:join(TestDir, "no_shrink.dat"),
+    ok = file:write_file(Path, binary:copy(<<"x">>, 1000)),
+
+    %% Existing file larger than {size, N} with create: mapping covers
+    %% the whole file and the file is not truncated on any platform.
+    {ok, H1} = iommap:open(Path, read_write, [create, {size, 100}]),
+    ?assertEqual({ok, 1000}, iommap:position(H1)),
+    ok = iommap:close(H1),
+    {ok, #file_info{size = 1000}} = file:read_file_info(Path),
+
+    %% Existing file smaller than {size, N} is grown.
+    {ok, H2} = iommap:open(Path, read_write, [create, {size, 2000}]),
+    ?assertEqual({ok, 2000}, iommap:position(H2)),
+    ok = iommap:close(H2),
+
+    %% Explicit truncate then size gives exactly N.
+    {ok, H3} = iommap:open(Path, read_write, [truncate, {size, 50}]),
+    ?assertEqual({ok, 50}, iommap:position(H3)),
+    ok = iommap:close(H3).
+
+nul_in_path(TestDir) ->
+    Good = filename:join(TestDir, "nul.dat"),
+    ok = file:write_file(Good, <<"data">>),
+    Bad = iolist_to_binary([Good, 0, "ignored"]),
+    ?assertError(badarg, iommap:open(Bad, read, [])).
+
+unicode_path(TestDir) ->
+    Path = filename:join(TestDir, [16#e9, 16#4e2d, "_unicode.dat"]),
+    {ok, H} = iommap:open(Path, read_write, [create, {size, 8}]),
+    ok = iommap:pwrite(H, 0, <<"unicode!">>),
+    ok = iommap:close(H),
+    ?assertEqual({ok, <<"unicode!">>}, file:read_file(Path)).

@@ -47,8 +47,15 @@ typedef struct {
     volatile sig_atomic_t caught;
 } iommap_tls_t;
 
+/* The key is created in iommap_platform_init_sigbus_handler (NIF
+ * load, serialised by the code server) and deleted in
+ * iommap_platform_uninstall_sigbus_handler (NIF unload). It must not
+ * outlive the DSO: pthread would otherwise call iommap_tls_destructor
+ * through a pointer into unmapped text when a thread exits after
+ * code:purge. Not using pthread_once so a DSO that is unloaded and
+ * reloaded without being dlclose'd gets a fresh key. */
 static pthread_key_t iommap_tls_key;
-static pthread_once_t iommap_tls_key_once = PTHREAD_ONCE_INIT;
+static bool iommap_tls_key_created = false;
 
 /* SIGBUS install/restore state.
  *
@@ -84,19 +91,27 @@ static struct sigaction sigbus_default_action;
 
 static bool iommap_sigbus_installed = false;
 
+/* Number of live NIF loads sharing this DSO image.
+ *
+ * dlopen of an unchanged .so path returns the already-mapped image
+ * (glibc and macOS both refcount by path/inode), so on hot upgrade the
+ * "old" and "new" NIF can share these statics. The old module's
+ * on_unload then runs while the new one is still in use, and must not
+ * uninstall the handler or delete the TLS key. Only the last unload
+ * for this image tears down. When the .so was replaced on disk the new
+ * image has its own copy of every static and its own count. */
+static int iommap_load_count = 0;
+
 static void iommap_tls_destructor(void *arg)
 {
     free(arg);
 }
 
-static void iommap_tls_key_init(void)
-{
-    (void)pthread_key_create(&iommap_tls_key, iommap_tls_destructor);
-}
-
 static iommap_tls_t *iommap_tls_get_or_alloc(void)
 {
-    (void)pthread_once(&iommap_tls_key_once, iommap_tls_key_init);
+    if (!iommap_tls_key_created) {
+        return NULL;
+    }
     iommap_tls_t *tls = (iommap_tls_t *)pthread_getspecific(iommap_tls_key);
     if (tls != NULL) {
         return tls;
@@ -119,7 +134,9 @@ static void sigbus_handler(int sig, siginfo_t *info, void *context)
     if (sig != SIGBUS) {
         return;
     }
-    iommap_tls_t *tls = (iommap_tls_t *)pthread_getspecific(iommap_tls_key);
+    iommap_tls_t *tls = iommap_tls_key_created
+        ? (iommap_tls_t *)pthread_getspecific(iommap_tls_key)
+        : NULL;
     if (tls != NULL && tls->in_protected) {
         tls->caught = 1;
         siglongjmp(tls->jmpbuf, 1);
@@ -136,7 +153,14 @@ static void sigbus_handler(int sig, siginfo_t *info, void *context)
 
 int iommap_platform_init_sigbus_handler(void)
 {
-    (void)pthread_once(&iommap_tls_key_once, iommap_tls_key_init);
+    iommap_load_count++;
+
+    if (!iommap_tls_key_created) {
+        if (pthread_key_create(&iommap_tls_key, iommap_tls_destructor) != 0) {
+            return -1;
+        }
+        iommap_tls_key_created = true;
+    }
 
     if (iommap_sigbus_installed) {
         /* Same DSO, second on_load/on_upgrade. No-op so we don't
@@ -182,6 +206,30 @@ int iommap_platform_init_sigbus_handler(void)
 
 void iommap_platform_uninstall_sigbus_handler(void)
 {
+    if (iommap_load_count > 0) {
+        iommap_load_count--;
+    }
+    if (iommap_load_count > 0) {
+        /* Another load of this same image is still live. */
+        return;
+    }
+
+    /* Drop the TLS key first so no thread exit after this point can
+     * run iommap_tls_destructor from a DSO about to be dlclose'd.
+     * Per-thread blocks already handed out (~sizeof(sigjmp_buf) each,
+     * one per scheduler thread that ran iommap) are intentionally
+     * leaked: pthread_key_delete does not run destructors and we
+     * cannot safely reach other threads' values. */
+    if (iommap_tls_key_created) {
+        void *own = pthread_getspecific(iommap_tls_key);
+        if (own != NULL) {
+            (void)pthread_setspecific(iommap_tls_key, NULL);
+            free(own);
+        }
+        (void)pthread_key_delete(iommap_tls_key);
+        iommap_tls_key_created = false;
+    }
+
     if (!iommap_sigbus_installed) {
         return;
     }
@@ -243,8 +291,9 @@ void iommap_platform_enter_protected(void)
 
 void iommap_platform_leave_protected(void)
 {
-    iommap_tls_t *tls =
-        (iommap_tls_t *)pthread_getspecific(iommap_tls_key);
+    iommap_tls_t *tls = iommap_tls_key_created
+        ? (iommap_tls_t *)pthread_getspecific(iommap_tls_key)
+        : NULL;
     if (tls != NULL) {
         tls->in_protected = 0;
     }

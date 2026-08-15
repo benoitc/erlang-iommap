@@ -30,7 +30,7 @@ CFLAGS="${CFLAGS:-} -fPIC -O2 -Wall -Wextra -I$ERLINC"
 
 case "$(uname -s)" in
     Darwin)
-        LDFLAGS="${LDFLAGS:-} -bundle -flat_namespace -undefined suppress -lpthread"
+        LDFLAGS="${LDFLAGS:-} -bundle -flat_namespace -undefined dynamic_lookup -lpthread"
         ;;
     Linux)
         CFLAGS="$CFLAGS -D_GNU_SOURCE"

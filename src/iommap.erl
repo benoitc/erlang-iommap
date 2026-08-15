@@ -153,9 +153,18 @@ open(Path, Options) ->
     Path :: file:filename_all(),
     Mode :: mode(),
     Options :: [open_option()].
-open(Path, Mode, Options) when is_list(Path); is_binary(Path) ->
-    PathBin = iolist_to_binary(Path),
-    nif_open(PathBin, Mode, Options);
+open(Path, Mode, Options) when is_binary(Path) ->
+    nif_open(Path, Mode, Options);
+open(Path, Mode, Options) when is_list(Path) ->
+    %% Encode charlists (which may contain code points above 255) in
+    %% the native filename encoding instead of iolist_to_binary/1,
+    %% which raises on such input.
+    case unicode:characters_to_binary(Path, unicode, file:native_name_encoding()) of
+        PathBin when is_binary(PathBin) ->
+            nif_open(PathBin, Mode, Options);
+        _ ->
+            {error, badarg}
+    end;
 open(_, _, _) ->
     {error, badarg}.
 

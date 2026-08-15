@@ -171,6 +171,12 @@ ERL_NIF_TERM iommap_nif_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         return enif_make_badarg(env);
     }
 
+    /* Reject embedded NUL: the kernel would silently truncate the path
+     * at the first NUL byte, opening a different file than requested. */
+    if (memchr(path_bin.data, '\0', path_bin.size) != NULL) {
+        return enif_make_badarg(env);
+    }
+
     /* Null-terminate path */
     char *path = enif_alloc(path_bin.size + 1);
     if (path == NULL) {
@@ -193,18 +199,28 @@ ERL_NIF_TERM iommap_nif_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
         return enif_make_badarg(env);
     }
 
+    /* create/truncate need a writable fd: O_RDONLY|O_TRUNC is
+     * unspecified by POSIX and truncates the file on Linux, and
+     * O_RDONLY|O_CREAT would leave an empty file behind that we then
+     * refuse to map. Reject both up front in read mode. */
+    if (mode == IOMMAP_MODE_READ && (opts.create || opts.do_truncate)) {
+        enif_free(path);
+        return MAKE_ERROR(env, ATOM_EINVAL);
+    }
+
     /* mmap with PROT_WRITE needs a readable fd, so write mode opens
-     * O_RDWR. */
-    int open_flags = 0;
+     * O_RDWR. O_CLOEXEC keeps the fd out of children spawned via
+     * open_port/os:cmd. */
+    int open_flags = O_CLOEXEC;
     switch (mode) {
         case IOMMAP_MODE_READ:
-            open_flags = O_RDONLY;
+            open_flags |= O_RDONLY;
             break;
         case IOMMAP_MODE_WRITE:
-            open_flags = O_RDWR;
+            open_flags |= O_RDWR;
             break;
         case IOMMAP_MODE_READ_WRITE:
-            open_flags = O_RDWR;
+            open_flags |= O_RDWR;
             break;
     }
 
@@ -217,24 +233,31 @@ ERL_NIF_TERM iommap_nif_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
 
     /* Open file */
     int fd = open(path, open_flags, 0644);
+    int open_err = errno;
     enif_free(path);
 
     if (fd < 0) {
-        return MAKE_ERROR(env, errno_to_atom(env, errno));
+        return MAKE_ERROR(env, errno_to_atom(env, open_err));
     }
 
     /* Get or set file size */
     size_t file_size;
     if (iommap_platform_fsize(fd, &file_size) < 0) {
+        int err = errno;
         close(fd);
-        return MAKE_ERROR(env, errno_to_atom(env, errno));
+        return MAKE_ERROR(env, errno_to_atom(env, err));
     }
 
-    /* Handle size option for new/empty files */
-    if (opts.size > 0 && (opts.create || opts.do_truncate || file_size == 0)) {
+    /* {size, N} only ever grows the file. It applies to files that
+     * are new, truncated, or empty, and to existing files smaller
+     * than N. It never shrinks an existing file: on platforms where
+     * fallocate falls back to ftruncate that would silently discard
+     * data that Linux would have kept. */
+    if (opts.size > file_size) {
         if (iommap_platform_fallocate(fd, opts.size) < 0) {
+            int err = errno;
             close(fd);
-            return MAKE_ERROR(env, errno_to_atom(env, errno));
+            return MAKE_ERROR(env, errno_to_atom(env, err));
         }
         file_size = opts.size;
     }
@@ -365,6 +388,12 @@ ERL_NIF_TERM iommap_nif_pread(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[
 
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
+    if (jmpbuf == NULL) {
+        /* Thread-local SIGBUS state could not be allocated; refuse
+         * rather than touch the mapping unprotected. */
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_ENOMEM);
+    }
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
         iommap_platform_enter_protected();
@@ -424,6 +453,10 @@ ERL_NIF_TERM iommap_nif_pwrite(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
 
     iommap_platform_clear_sigbus();
     sigjmp_buf *jmpbuf = (sigjmp_buf *)iommap_platform_get_sigbus_jmpbuf();
+    if (jmpbuf == NULL) {
+        iommap_handle_unlock(handle);
+        return MAKE_ERROR(env, ATOM_ENOMEM);
+    }
 
     if (sigsetjmp(*jmpbuf, 1) == 0) {
         iommap_platform_enter_protected();
@@ -468,11 +501,12 @@ ERL_NIF_TERM iommap_nif_sync(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
 
     iommap_mapping_t *m = handle->mapping;
     int result = msync(m->data, m->size, flags);
+    int err = errno;
 
     iommap_handle_unlock(handle);
 
     if (result < 0) {
-        return MAKE_ERROR(env, errno_to_atom(env, errno));
+        return MAKE_ERROR(env, errno_to_atom(env, err));
     }
 
     return ATOM_OK;
@@ -516,7 +550,7 @@ ERL_NIF_TERM iommap_nif_truncate(ErlNifEnv *env, int argc, const ERL_NIF_TERM ar
        mapping keeps its original fd until its destructor runs (i.e.
        when all outstanding region_binaries from the old mapping are
        GC'd). */
-    int new_fd = dup(old->fd);
+    int new_fd = fcntl(old->fd, F_DUPFD_CLOEXEC, 0);
     if (new_fd < 0) {
         int err = errno;
         iommap_handle_unlock(handle);
@@ -617,11 +651,12 @@ ERL_NIF_TERM iommap_nif_advise(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
 
     int result = madvise((unsigned char *)m->data + offset,
                          (size_t)length, advice);
+    int err = errno;
 
     iommap_handle_unlock(handle);
 
     if (result < 0) {
-        return MAKE_ERROR(env, errno_to_atom(env, errno));
+        return MAKE_ERROR(env, errno_to_atom(env, err));
     }
 
     return ATOM_OK;

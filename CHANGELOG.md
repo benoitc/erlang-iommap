@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- File descriptors are now opened with `O_CLOEXEC` (and duplicated
+  with `F_DUPFD_CLOEXEC` in `truncate/2`), so mapped files no longer
+  leak into child processes spawned via `open_port` or `os:cmd`.
+- SIGBUS protection survives `code:load_file/1` + `code:purge/1`.
+  dlopen of an unchanged `.so` path returns the already-mapped image,
+  so the old and new NIF share statics; the old module's `on_unload`
+  restored `SIG_DFL` while the new module was live, and the next
+  SIGBUS killed the VM. Teardown now happens only when the last load
+  of a DSO image is unloaded.
+- The per-thread SIGBUS state key is created at NIF load and deleted
+  at the last NIF unload for the DSO image. Previously the `pthread_key` (and its destructor,
+  which lives in the NIF text) outlived the DSO after `code:purge`,
+  so a scheduler thread exiting later would call into unmapped
+  memory. Per-thread state blocks already handed out are leaked
+  on unload (a few hundred bytes per scheduler thread that ran iommap).
+- `open/3` in `read` mode now returns `{error, einval}` when given
+  `create` or `truncate`. `O_RDONLY|O_TRUNC` is unspecified by POSIX
+  and truncates the file on Linux; `O_RDONLY|O_CREAT` left an empty
+  file behind that was then refused with `einval`.
+- `{size, N}` never shrinks an existing file. Before, opening an
+  existing larger file with `create` and a smaller `{size, N}` kept
+  the file intact on Linux but truncated it on macOS and BSD (where
+  fallocate falls back to `ftruncate`). Now the file is only grown
+  when it is smaller than N, and the mapping covers the whole file
+  otherwise.
+- `open/3` rejects paths with an embedded NUL byte (`badarg`) instead
+  of silently opening the prefix.
+- `open/3` accepts charlists with code points above 255; they are
+  encoded with `file:native_name_encoding/0` instead of raising from
+  `iolist_to_binary/1`.
+- `errno` is captured before `close`, `enif_free` or unlocking, so
+  error atoms reflect the failing call rather than a later one.
+- `pread/3` and `pwrite/3` return `{error, enomem}` instead of
+  dereferencing NULL if the thread-local SIGBUS state cannot be
+  allocated.
+- `position/1` runs as a dirty I/O NIF like the other operations. It
+  takes the handle rwlock and could block a normal scheduler behind
+  a writer in a long `msync`/`fallocate`.
+
+### Added
+
+- CI covers Erlang/OTP 29.
+
 ## [1.1.3] - 2026-05-10
 
 ### Fixed

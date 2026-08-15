@@ -19,8 +19,12 @@
 - `lock` - Lock pages in memory to prevent swapping
 - `populate` - Prefault pages on mapping (Linux only)
 - `nocache` - Disable page caching (macOS only)
-- `create` - Create file if it doesn't exist
-- `truncate` - Truncate existing file
+- `create` - Create file if it doesn't exist (returns `{error, einval}` in `read` mode)
+- `truncate` - Truncate existing file (returns `{error, einval}` in `read` mode)
+- `{size, N}` - Grow the file to N bytes if it is smaller. Never shrinks an existing file; combine with `truncate` to get exactly N bytes.
+
+Files are opened with `O_CLOEXEC`, so the descriptor is not inherited by
+child processes started with `open_port/2` or `os:cmd/1`.
 
 ### Memory Advice (madvise)
 Provide hints to the kernel about access patterns:
